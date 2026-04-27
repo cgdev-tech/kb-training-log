@@ -209,6 +209,63 @@
 
         .checklist li.done span { text-decoration: line-through; color: var(--muted); }
 
+        /* ── KB counter ── */
+        .kb-controls {
+            padding: 0.75rem 0 0.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+        .counter-row {
+            display: flex;
+            align-items: center;
+            gap: 0.9rem;
+        }
+        .counter-btn {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: var(--border);
+            color: var(--text);
+            border: none;
+            font-size: 1.3rem;
+            font-weight: 300;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 0;
+            flex-shrink: 0;
+            line-height: 1;
+        }
+        .counter-btn:hover { background: #383838; opacity: 1; }
+        .counter-btn:active { background: #444; }
+        .counter-val {
+            font-size: 2rem;
+            font-weight: 700;
+            color: var(--accent);
+            min-width: 2.5rem;
+            text-align: center;
+            line-height: 1;
+        }
+        .counter-label { font-size: 0.8rem; color: var(--muted); }
+        .complete-check-row {
+            display: flex;
+            align-items: center;
+            gap: 0.65rem;
+            font-size: 0.875rem;
+            padding: 0.4rem 0 0.25rem;
+            cursor: pointer;
+            user-select: none;
+            width: fit-content;
+        }
+        .complete-check-row input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--accent);
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
         /* ── Completed day ── */
         .day-card.day-done {
             opacity: 0.32;
@@ -373,6 +430,8 @@ function loadState()     { try { return JSON.parse(localStorage.getItem('kb_log'
 function saveState()     { try { localStorage.setItem('kb_log', JSON.stringify(state)); } catch(e) {} }
 function getCheck(k, i)  { return !!state[k]?.c?.[i]; }
 function setCheck(k,i,v) { if (!state[k]) state[k]={}; if (!state[k].c) state[k].c={}; state[k].c[i]=v; saveState(); }
+function getCount(k)     { return state[k + '_cnt'] || 0; }
+function setCount(k, v)  { state[k + '_cnt'] = v; saveState(); }
 
 function buildPlan(start) {
     return KB_PLAN.map((kbWeek, w) => {
@@ -388,7 +447,7 @@ function buildPlan(start) {
             if (isKB) {
                 const desc = kbWeek.workouts[kbi++] ?? null;
                 return { type:'kb', date, label:fmtDate(date), key:dateKey(date), desc,
-                         items: desc ? Array.from({length:10}, (_,i) => `Set ${i+1}`) : [] };
+                         items: [] };
             }
             return { type:'bw', date, label:fmtDate(date), key:dateKey(date),
                      items:[...BW_EXERCISES] };
@@ -398,8 +457,20 @@ function buildPlan(start) {
 }
 
 function dayProgress(day) {
+    if (day.type === 'kb') {
+        const done = !!state[day.key + '_done'] ? 1 : 0;
+        return { done, total: 1 };
+    }
     const done = day.items.filter((_,i) => getCheck(day.key,i)).length;
     return { done, total: day.items.length };
+}
+
+function updateKBDstat(key) {
+    const el = document.getElementById(`dstat-${key}`);
+    if (!el) return;
+    const isDone  = !!state[key + '_done'];
+    const count   = getCount(key);
+    el.textContent = isDone ? '✓' : (count > 0 ? String(count) : '—');
 }
 
 function weekProgress(week) {
@@ -409,12 +480,18 @@ function weekProgress(week) {
 }
 
 function createDayCard(day, week) {
-    const dp   = dayProgress(day);
-    const card = document.createElement('div');
-    card.className = 'day-card';
+    const dp         = dayProgress(day);
+    const card       = document.createElement('div');
+    card.className   = 'day-card';
 
     const badgeLabel = day.type==='kb' ? 'Kettlebell' : day.type==='bw' ? 'Bodyweight' : 'Run';
     const sub        = day.type==='kb' ? day.desc : day.type==='bw' ? 'Bodyweight circuit' : 'Cardio';
+
+    const isDone     = !!state[day.key + '_done'];
+    const count      = getCount(day.key);
+    const initDstat  = day.type === 'kb'
+        ? (isDone ? '✓' : (count > 0 ? String(count) : '—'))
+        : `${dp.done}/${dp.total}`;
 
     card.innerHTML = `
         <div class="day-hdr ${day.type}">
@@ -423,7 +500,7 @@ function createDayCard(day, week) {
                 <div class="day-sub">${sub}</div>
             </div>
             <div class="day-meta">
-                <span class="day-prog" id="dstat-${day.key}">${dp.done}/${dp.total}</span>
+                <span class="day-prog" id="dstat-${day.key}">${initDstat}</span>
                 <span class="badge ${day.type}">${badgeLabel}</span>
                 <span class="chevron" id="chev-${day.key}">▼</span>
             </div>
@@ -433,28 +510,108 @@ function createDayCard(day, week) {
 
     card.querySelector('.day-hdr').addEventListener('click', () => toggleBody(day.key));
 
-    const ul = document.createElement('ul');
-    ul.className = 'checklist';
-    day.items.forEach((item, idx) => {
-        const checked = getCheck(day.key, idx);
-        const li = document.createElement('li');
-        li.className = checked ? 'done' : '';
+    const bodyEl = card.querySelector(`#body-${day.key}`);
+
+    if (day.type === 'kb') {
+        // ── Counter + complete checkbox ──
+        const controls = document.createElement('div');
+        controls.className = 'kb-controls';
+
+        // Counter row
+        const counterRow  = document.createElement('div');
+        counterRow.className = 'counter-row';
+
+        const minusBtn = document.createElement('button');
+        minusBtn.className   = 'counter-btn';
+        minusBtn.textContent = '−';
+
+        const countVal = document.createElement('span');
+        countVal.className   = 'counter-val';
+        countVal.textContent = count;
+
+        const plusBtn = document.createElement('button');
+        plusBtn.className   = 'counter-btn';
+        plusBtn.textContent = '+';
+
+        const countLabel = document.createElement('span');
+        countLabel.className   = 'counter-label';
+        countLabel.textContent = 'sets';
+
+        minusBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            const cur = getCount(day.key);
+            if (cur <= 0) return;
+            setCount(day.key, cur - 1);
+            countVal.textContent = cur - 1;
+            updateKBDstat(day.key);
+            refreshStats(day.key, week.week);
+        });
+
+        plusBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            const cur = getCount(day.key);
+            setCount(day.key, cur + 1);
+            countVal.textContent = cur + 1;
+            updateKBDstat(day.key);
+            refreshStats(day.key, week.week);
+        });
+
+        counterRow.appendChild(minusBtn);
+        counterRow.appendChild(countVal);
+        counterRow.appendChild(plusBtn);
+        counterRow.appendChild(countLabel);
+
+        // Complete checkbox
+        const completeRow = document.createElement('label');
+        completeRow.className = 'complete-check-row';
+
         const cb = document.createElement('input');
         cb.type    = 'checkbox';
-        cb.checked = checked;
-        const sp   = document.createElement('span');
-        sp.textContent = item;
+        cb.checked = isDone;
+
+        const cbLabel = document.createElement('span');
+        cbLabel.textContent = 'Workout Complete';
+
         cb.addEventListener('change', () => {
-            li.className = cb.checked ? 'done' : '';
-            setCheck(day.key, idx, cb.checked);
+            state[day.key + '_done'] = cb.checked;
+            saveState();
+            updateKBDstat(day.key);
             refreshStats(day.key, week.week);
             checkDayCompletion(day, card, week.week);
         });
-        li.appendChild(cb);
-        li.appendChild(sp);
-        ul.appendChild(li);
-    });
-    card.querySelector(`#body-${day.key}`).appendChild(ul);
+
+        completeRow.appendChild(cb);
+        completeRow.appendChild(cbLabel);
+        controls.appendChild(counterRow);
+        controls.appendChild(completeRow);
+        bodyEl.appendChild(controls);
+
+    } else {
+        // ── Checklist (BW + Run) ──
+        const ul = document.createElement('ul');
+        ul.className = 'checklist';
+        day.items.forEach((item, idx) => {
+            const checked = getCheck(day.key, idx);
+            const li = document.createElement('li');
+            li.className = checked ? 'done' : '';
+            const cbx = document.createElement('input');
+            cbx.type    = 'checkbox';
+            cbx.checked = checked;
+            const sp    = document.createElement('span');
+            sp.textContent = item;
+            cbx.addEventListener('change', () => {
+                li.className = cbx.checked ? 'done' : '';
+                setCheck(day.key, idx, cbx.checked);
+                refreshStats(day.key, week.week);
+                checkDayCompletion(day, card, week.week);
+            });
+            li.appendChild(cbx);
+            li.appendChild(sp);
+            ul.appendChild(li);
+        });
+        bodyEl.appendChild(ul);
+    }
+
     return card;
 }
 
@@ -558,7 +715,10 @@ function refreshStats(dayKey, weekNum) {
     const wp = weekProgress(week);
 
     const ds = document.getElementById(`dstat-${dayKey}`);
-    if (ds) ds.textContent = `${dp.done}/${dp.total}`;
+    if (ds) {
+        if (day.type === 'kb') updateKBDstat(dayKey);
+        else ds.textContent = `${dp.done}/${dp.total}`;
+    }
 
     const ws = document.getElementById(`wstat-${weekNum}`);
     if (ws) ws.textContent = `${wp.done}/${wp.total} complete`;
@@ -588,9 +748,16 @@ function buildMD() {
             else if (day.type==='bw')  heading = `### ${day.label} — Bodyweight`;
             else heading = `### ${day.label} — Run`;
             md += heading + '\n';
-            day.items.forEach((item, i) => {
-                md += `- [${getCheck(day.key,i)?'x':' '}] ${item}\n`;
-            });
+            if (day.type === 'kb') {
+                const n    = getCount(day.key);
+                const done = !!state[day.key + '_done'];
+                md += `- Sets completed: ${n}\n`;
+                md += `- [${done?'x':' '}] Workout Complete\n`;
+            } else {
+                day.items.forEach((item, i) => {
+                    md += `- [${getCheck(day.key,i)?'x':' '}] ${item}\n`;
+                });
+            }
             md += '\n';
         });
         md += '---\n\n';
