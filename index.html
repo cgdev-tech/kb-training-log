@@ -774,6 +774,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const saved = loadState();
     if (saved['__start']) {
         document.getElementById('start-date').value = saved['__start'];
+        state = saved;
+        plan  = buildPlan(new Date(saved['__start'] + 'T12:00:00'));
+        showLog();
+        render();
     }
 
     document.getElementById('gen-btn').addEventListener('click', () => {
