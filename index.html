@@ -411,10 +411,12 @@ const BW_EXERCISES = [
     "Inverted Rows: 3 × 10-15 (supinated grip)",
     "Pike Push-ups: 3 × 8-12 (lean forward)",
     "Decline Push-ups: 3 × 10-15 (deficit/stretch)",
-    "Dips: 3 × 10-15 (chest lean)",
-    "Hip Hinges: 3 × 12-20",
-    "Dragon Flags: 3 × 5-10 (anti-extension)"
+    "Dips: 3 × 10-15 (chest lean)"
 ];
+
+const BW_COUNTERS = ["Navy Seal Burpees"];
+
+const UNIVERSAL_ITEMS = ["71 ∞"];
 
 const DAYS   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
@@ -430,8 +432,14 @@ function loadState()     { try { return JSON.parse(localStorage.getItem('kb_log'
 function saveState()     { try { localStorage.setItem('kb_log', JSON.stringify(state)); } catch(e) {} }
 function getCheck(k, i)  { return !!state[k]?.c?.[i]; }
 function setCheck(k,i,v) { if (!state[k]) state[k]={}; if (!state[k].c) state[k].c={}; state[k].c[i]=v; saveState(); }
-function getCount(k)     { return state[k + '_cnt'] || 0; }
-function setCount(k, v)  { state[k + '_cnt'] = v; saveState(); }
+function getCount(k)        { return state[k + '_cnt'] || 0; }
+function setCount(k, v)     { state[k + '_cnt'] = v; saveState(); }
+function getBWCount(k, i)    { return state[k + '_bwcnt_' + i] || 0; }
+function setBWCount(k, i, v) { state[k + '_bwcnt_' + i] = v; saveState(); }
+function getUniCheck(k, i)      { return !!state[k + '_uni_' + i]; }
+function setUniCheck(k, i, v)   { state[k + '_uni_' + i] = v; saveState(); }
+function getBWCountDone(k, i)   { return !!state[k + '_bwcdone_' + i]; }
+function setBWCountDone(k, i, v){ state[k + '_bwcdone_' + i] = v; saveState(); }
 
 function buildPlan(start) {
     return KB_PLAN.map((kbWeek, w) => {
@@ -441,28 +449,31 @@ function buildPlan(start) {
             const date = addDays(start, w*7 + d);
             if (d === 5) {
                 return { type:'run', date, label:fmtDate(date), key:dateKey(date),
-                         items:['Run'] };
+                         items:['Run'], universal:[...UNIVERSAL_ITEMS] };
             }
             const isKB = d===0 || d===2 || d===4;
             if (isKB) {
                 const desc = kbWeek.workouts[kbi++] ?? null;
                 return { type:'kb', date, label:fmtDate(date), key:dateKey(date), desc,
-                         items: [] };
+                         items: [], universal:[...UNIVERSAL_ITEMS] };
             }
             return { type:'bw', date, label:fmtDate(date), key:dateKey(date),
-                     items:[...BW_EXERCISES] };
+                     items:[...BW_EXERCISES], counters:[...BW_COUNTERS], universal:[...UNIVERSAL_ITEMS] };
         });
         return { week: w+1, days };
     });
 }
 
 function dayProgress(day) {
+    const uniDone  = (day.universal || []).filter((_,i) => getUniCheck(day.key,i)).length;
+    const uniTotal = (day.universal || []).length;
     if (day.type === 'kb') {
         const done = !!state[day.key + '_done'] ? 1 : 0;
-        return { done, total: 1 };
+        return { done: done + uniDone, total: 1 + uniTotal };
     }
-    const done = day.items.filter((_,i) => getCheck(day.key,i)).length;
-    return { done, total: day.items.length };
+    const checkDone   = day.items.filter((_,i) => getCheck(day.key,i)).length;
+    const counterDone = (day.counters || []).filter((_,i) => getBWCountDone(day.key,i)).length;
+    return { done: checkDone + counterDone + uniDone, total: day.items.length + (day.counters || []).length + uniTotal };
 }
 
 function updateKBDstat(key) {
@@ -610,6 +621,115 @@ function createDayCard(day, week) {
             ul.appendChild(li);
         });
         bodyEl.appendChild(ul);
+
+        if (day.counters && day.counters.length > 0) {
+            day.counters.forEach((name, ci) => {
+                const wrapper = document.createElement('div');
+                wrapper.style.cssText = 'padding: 0.25rem 0;';
+
+                const isDone = getBWCountDone(day.key, ci);
+                const curVal = getBWCount(day.key, ci);
+
+                const cbRow = document.createElement('div');
+                cbRow.style.cssText = 'display:flex; align-items:center; gap:0.65rem; font-size:0.875rem;';
+
+                const cbx = document.createElement('input');
+                cbx.type    = 'checkbox';
+                cbx.checked = isDone;
+                cbx.style.cssText = 'width:16px; height:16px; accent-color:var(--accent); cursor:pointer; flex-shrink:0;';
+
+                const sp = document.createElement('span');
+                sp.textContent = name;
+                if (isDone) { sp.style.textDecoration = 'line-through'; sp.style.color = 'var(--muted)'; }
+
+                cbRow.appendChild(cbx);
+                cbRow.appendChild(sp);
+
+                const counterRow = document.createElement('div');
+                counterRow.className = 'counter-row';
+                counterRow.style.cssText = 'margin-left:1.65rem; margin-top:0.35rem;';
+                counterRow.style.display = isDone ? 'none' : 'flex';
+
+                const minusBtn = document.createElement('button');
+                minusBtn.className   = 'counter-btn';
+                minusBtn.textContent = '−';
+
+                const countVal = document.createElement('span');
+                countVal.className   = 'counter-val';
+                countVal.style.fontSize = '1.2rem';
+                countVal.textContent = curVal;
+
+                const plusBtn = document.createElement('button');
+                plusBtn.className   = 'counter-btn';
+                plusBtn.textContent = '+';
+
+                const countLabel = document.createElement('span');
+                countLabel.className   = 'counter-label';
+                countLabel.textContent = 'reps';
+
+                minusBtn.addEventListener('click', e => {
+                    e.stopPropagation();
+                    const cur = getBWCount(day.key, ci);
+                    if (cur <= 0) return;
+                    setBWCount(day.key, ci, cur - 1);
+                    countVal.textContent = cur - 1;
+                    refreshStats(day.key, week.week);
+                });
+
+                plusBtn.addEventListener('click', e => {
+                    e.stopPropagation();
+                    const cur = getBWCount(day.key, ci);
+                    setBWCount(day.key, ci, cur + 1);
+                    countVal.textContent = cur + 1;
+                    refreshStats(day.key, week.week);
+                });
+
+                cbx.addEventListener('change', () => {
+                    setBWCountDone(day.key, ci, cbx.checked);
+                    sp.style.textDecoration = cbx.checked ? 'line-through' : '';
+                    sp.style.color          = cbx.checked ? 'var(--muted)' : '';
+                    counterRow.style.display = cbx.checked ? 'none' : 'flex';
+                    refreshStats(day.key, week.week);
+                    checkDayCompletion(day, card, week.week);
+                });
+
+                counterRow.appendChild(minusBtn);
+                counterRow.appendChild(countVal);
+                counterRow.appendChild(plusBtn);
+                counterRow.appendChild(countLabel);
+                wrapper.appendChild(cbRow);
+                wrapper.appendChild(counterRow);
+                bodyEl.appendChild(wrapper);
+            });
+        }
+    }
+
+    if (day.universal && day.universal.length > 0) {
+        const uniUl = document.createElement('ul');
+        uniUl.className = 'checklist';
+        uniUl.style.borderTop = '1px solid var(--border)';
+        uniUl.style.marginTop = '0.5rem';
+        uniUl.style.paddingTop = '0.25rem';
+        day.universal.forEach((item, idx) => {
+            const checked = getUniCheck(day.key, idx);
+            const li = document.createElement('li');
+            li.className = checked ? 'done' : '';
+            const cbx = document.createElement('input');
+            cbx.type    = 'checkbox';
+            cbx.checked = checked;
+            const sp = document.createElement('span');
+            sp.innerHTML = item.replace('∞', '<span style="font-size:1.3em;vertical-align:middle;color:var(--accent);">∞</span>');
+            cbx.addEventListener('change', () => {
+                li.className = cbx.checked ? 'done' : '';
+                setUniCheck(day.key, idx, cbx.checked);
+                refreshStats(day.key, week.week);
+                checkDayCompletion(day, card, week.week);
+            });
+            li.appendChild(cbx);
+            li.appendChild(sp);
+            uniUl.appendChild(li);
+        });
+        bodyEl.appendChild(uniUl);
     }
 
     return card;
@@ -757,7 +877,14 @@ function buildMD() {
                 day.items.forEach((item, i) => {
                     md += `- [${getCheck(day.key,i)?'x':' '}] ${item}\n`;
                 });
+                (day.counters || []).forEach((name, i) => {
+                    const done = getBWCountDone(day.key, i);
+                    md += `- [${done?'x':' '}] ${name}: ${getBWCount(day.key,i)} reps\n`;
+                });
             }
+            (day.universal || []).forEach((item, i) => {
+                md += `- [${getUniCheck(day.key,i)?'x':' '}] ${item}\n`;
+            });
             md += '\n';
         });
         md += '---\n\n';
